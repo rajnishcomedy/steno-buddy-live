@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Steno Buddy - Stenography Accuracy Checker</title>
+    <!-- 1. Tailwind CSS CDN Script -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. React Libraries -->
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <!-- 3. Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 4. JSDiff Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Inconsolata&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'Inconsolata', monospace; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // --- Helper Functions ---
+        const tokenize = (text) => {
+            if (!text) return [];
+            return text.trim().split(/(\s+|[.,;!?()"])/).filter(Boolean);
+        };
+
+        const levenshteinDistance = (s1, s2) => {
+            s1 = s1.toLowerCase(); s2 = s2.toLowerCase();
+            const costs = [];
+            for (let i = 0; i <= s1.length; i++) {
+                let lastValue = i;
+                for (let j = 0; j <= s2.length; j++) {
+                    if (i === 0) costs[j] = j;
+                    else if (j > 0) {
+                        let newValue = costs[j - 1];
+                        if (s1.charAt(i - 1) !== s2.charAt(j - 1)) {
+                            newValue = Math.min(newValue, lastValue, costs[j]) + 1;
+                        }
+                        costs[j - 1] = lastValue;
+                        lastValue = newValue;
+                    }
+                }
+                if (i > 0) costs[s2.length] = lastValue;
+            }
+            return costs[s2.length];
+        };
+
+        const formatTime = (seconds) => {
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds % 60;
+            return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+        };
+
+        const sanitizeText = (text) => {
+            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;', "/": '&#x2F;' };
+            const reg = /[&<>"'/]/ig;
+            return text.replace(reg, (match)=>(map[match]));
+        };
+
+        // --- React Components ---
+        const FileUploader = ({ onFileLoad, disabled, inputKey }) => {
+            const [fileName, setFileName] = useState('');
+            const [error, setError] = useState('');
+            const [isDragging, setIsDragging] = useState(false);
+
+            const handleFileChange = async (file) => {
+                if (!file) return;
+                if (file.type !== 'text/plain') {
+                    setError('Unsupported file type. Please upload a .txt file.');
+                    return;
+                }
+                setFileName(file.name);
+                setError('');
+                try {
+                    const text = await file.text();
+                    if (text.trim() === '') {
+                        setError('The selected file is empty.');
+                        return;
+                    }
+                    onFileLoad(text, file.name);
+                } catch (e) {
+                    setError('Could not read the file.');
+                }
+            };
+
+            const handleDragEvents = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (disabled) return;
+                if (e.type === 'dragenter' || e.type === 'dragover') {
+                    setIsDragging(true);
+                } else if (e.type === 'dragleave') {
+                    setIsDragging(false);
+                } else if (e.type === 'drop') {
+                    setIsDragging(false);
+                    const files = e.dataTransfer.files;
+                    if (files && files.length > 0) handleFileChange(files[0]);
+                }
+            };
+
+            return (
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">1. Upload Passage</label>
+                    <div onDragEnter={handleDragEvents} onDragLeave={handleDragEvents} onDragOver={handleDragEvents} onDrop={handleDragEvents}
+                        className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300'} ${disabled ? 'opacity-50' : ''}`}>
+                        <label htmlFor="file-upload" className={`cursor-pointer ${disabled ? 'cursor-not-allowed' : ''}`} aria-label={disabled ? "Reset to upload a new passage" : "Upload a .txt passage"}>
+                            <svg className="mx-auto h-10 w-10 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true"><path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            <span className="mt-2 block text-sm font-medium text-gray-900">{fileName ? `Loaded: ${fileName}` : 'Drag & Drop or Click to Upload'}</span>
+                            <span className="text-xs text-gray-500">.txt files only</span>
+                        </label>
+                        <input key={inputKey} id="file-upload" type="file" className="sr-only" accept=".txt" onChange={(e) => handleFileChange(e.target.files[0])} disabled={disabled} />
+                        {error && <p className="text-sm text-red-500 mt-2">{error}</p>}
+                    </div>
+                </div>
+            );
+        };
+
+        const TranscriptionEditor = ({ text, setText, onStartTyping, disabled }) => {
+            const wordCount = tokenize(text).length;
+            return (
+                <div>
+                    <label htmlFor="transcription" className="block text-sm font-medium text-gray-700 mb-1">2. Transcribe Passage</label>
+                    <div className="relative">
+                        <textarea id="transcription" rows="12" className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition shadow-sm disabled:bg-gray-100 font-mono"
+                            placeholder={disabled ? "Upload a passage to begin..." : "Start typing here to begin the timer..."}
+                            value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onStartTyping} disabled={disabled} aria-disabled={disabled} />
+                        <div className="absolute bottom-3 right-3 text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">{wordCount} words</div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ResultsDisplay = ({ results, onShowConfirmation }) => {
+            if (!results) return null;
+            const { fullMistakes, halfMistakes, errorPercentage, analysisHtml, totalWords } = results;
+            return (
+                <div className="bg-white p-6 rounded-xl shadow-lg animate-fade-in space-y-4">
+                    <div className="flex justify-between items-center border-b pb-2">
+                         <h2 className="text-2xl font-bold text-gray-800">Assessment Results</h2>
+                         <button onClick={onShowConfirmation} className="text-sm bg-gray-200 text-gray-800 font-semibold py-1 px-3 rounded-lg hover:bg-gray-300 transition">Start Over</button>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                        <div className="bg-gray-100 p-4 rounded-lg"><p className="text-sm font-medium text-gray-500">Total Words</p><p className="text-2xl font-bold text-gray-900">{totalWords}</p></div>
+                        <div className="bg-red-100 p-4 rounded-lg"><p className="text-sm font-medium text-red-600">Full Mistakes</p><p className="text-2xl font-bold text-red-800">{fullMistakes}</p></div>
+                        <div className="bg-yellow-100 p-4 rounded-lg"><p className="text-sm font-medium text-yellow-600">Half Mistakes</p><p className="text-2xl font-bold text-yellow-800">{halfMistakes}</p></div>
+                        <div className="bg-green-100 p-4 rounded-lg"><p className="text-sm font-medium text-green-600">Error %</p><p className="text-2xl font-bold text-green-800">{errorPercentage}%</p></div>
+                    </div>
+                    <div>
+                        <div className="flex justify-between items-center mb-2">
+                            <h3 className="text-lg font-semibold text-gray-700">Transcription Analysis</h3>
+                            <div className="flex items-center space-x-4 text-xs">
+                                <span className="flex items-center"><span className="w-3 h-3 rounded-full bg-red-200 mr-1.5"></span>Full</span>
+                                <span className="flex items-center"><span className="w-3 h-3 rounded-full bg-yellow-200 mr-1.5"></span>Half</span>
+                                <span className="flex items-center"><span className="w-3 h-3 rounded-full bg-indigo-200 mr-1.5"></span>Omission</span>
+                            </div>
+                        </div>
+                        <div className="w-full h-[40vh] lg:h-96 overflow-y-auto p-3 border border-gray-200 rounded-lg bg-gray-50 whitespace-pre-wrap leading-relaxed font-mono" dangerouslySetInnerHTML={{ __html: analysisHtml }} />
+                    </div>
+                </div>
+            );
+        };
+
+        const ConfirmationModal = ({ onConfirm, onCancel }) => (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm mx-4">
+                    <h3 className="text-lg font-bold text-gray-900">Are you sure?</h3>
+                    <p className="mt-2 text-sm text-gray-600">Your current progress will be lost. Do you want to start over?</p>
+                    <div className="mt-4 flex justify-end space-x-2">
+                        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 hover:bg-gray-300">Cancel</button>
+                        <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700">Start Over</button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        function App() {
+            const [isFullScreen, setIsFullScreen] = useState(false);
+            const [showResetConfirm, setShowResetConfirm] = useState(false);
+            
+            const [masterText, setMasterText] = useState('');
+            const [transcribedText, setTranscribedText] = useState('');
+            const [results, setResults] = useState(null);
+            const [isLoading, setIsLoading] = useState(false);
+            
+            const [timeElapsed, setTimeElapsed] = useState(0);
+            const [timerActive, setTimerActive] = useState(false);
+            const [isPaused, setIsPaused] = useState(false);
+            const timerIntervalRef = useRef(null);
+            const startTimeRef = useRef(0);
+            const timePausedRef = useRef(0);
+
+            const [fileInputKey, setFileInputKey] = useState(Date.now());
+
+            const wpm = timeElapsed > 0 ? Math.round((tokenize(transcribedText).length / timeElapsed) * 60) : 0;
+
+            const analyzeTranscription = useCallback((master, transcribed) => {
+                const masterTokens = tokenize(master);
+                const transcribedTokens = tokenize(transcribed);
+                
+                const diff = window.Diff.diffArrays(masterTokens, transcribedTokens);
+                let fullMistakes = 0, halfMistakes = 0, analysisHtml = '';
+                let masterWordCount = masterTokens.filter(t => !/^\s+$/.test(t)).length;
+
+                for (let i = 0; i < diff.length; i++) {
+                    const part = diff[i];
+                    const value = part.value.map(sanitizeText).join('');
+
+                    if (part.added) {
+                        fullMistakes += part.value.filter(t => !/^\s+$/.test(t)).length;
+                        analysisHtml += `<span class="mistake-full" title="Added: ${value.trim()}">${value}</span>`;
+                    } else if (part.removed) {
+                        const nextPart = diff[i + 1];
+                        if (nextPart && nextPart.added) {
+                            const masterWord = part.value.join('').trim();
+                            const transcribedWord = nextPart.value.join('').trim();
+                            let isFull = true, type = "Substitution";
+                            
+                            if (levenshteinDistance(masterWord, transcribedWord) <= 2 && masterWord.length > 2) { halfMistakes++; isFull = false; type = "Spelling"; }
+                            else if (masterWord.toLowerCase() + 's' === transcribedWord.toLowerCase() || transcribedWord.toLowerCase() + 's' === masterWord.toLowerCase()) { halfMistakes++; isFull = false; type = "Singular/Plural"; }
+                            else if (masterWord.toLowerCase() === transcribedWord.toLowerCase()) { halfMistakes++; isFull = false; type = "Capitalization"; }
+                            
+                            if (isFull) {
+                                fullMistakes += 2;
+                                analysisHtml += `<span class="mistake-full" title="${type} (Expected: '${sanitizeText(masterWord)}')">${sanitizeText(transcribedWord)}</span>`;
+                            } else {
+                                analysisHtml += `<span class="mistake-half" title="${type} (Expected: '${sanitizeText(masterWord)}')">${sanitizeText(transcribedWord)}</span>`;
+                            }
+                            i++;
+                        } else {
+                            fullMistakes += part.value.filter(t => !/^\s+$/.test(t)).length;
+                            analysisHtml += `<span class="omission" title="Omitted: '${value.trim()}'">${value.trim()}</span>`;
+                        }
+                    } else {
+                        analysisHtml += value;
+                    }
+                }
+                const errorPercentage = masterWordCount > 0 ? (((fullMistakes + halfMistakes / 2) * 100) / masterWordCount).toFixed(2) : "0.00";
+                return { fullMistakes, halfMistakes, totalWords: masterWordCount, errorPercentage, analysisHtml };
+            }, []);
+
+            const handleEvaluation = useCallback(() => {
+                if (!masterText) return;
+                setTimerActive(false);
+                setIsLoading(true);
+                setTimeout(() => {
+                    setResults(analyzeTranscription(masterText, transcribedText));
+                    setIsLoading(false);
+                }, 300);
+            }, [masterText, transcribedText, analyzeTranscription]);
+
+            useEffect(() => {
+                if (timerActive && !isPaused) {
+                    startTimeRef.current = Date.now() - timePausedRef.current;
+                    timerIntervalRef.current = setInterval(() => {
+                        setTimeElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+                    }, 1000);
+                } else {
+                    timePausedRef.current = Date.now() - startTimeRef.current;
+                    clearInterval(timerIntervalRef.current);
+                }
+                return () => clearInterval(timerIntervalRef.current);
+            }, [timerActive, isPaused]);
+
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                    if (e.ctrlKey && e.key === 'Enter') {
+                        e.preventDefault();
+                        if (masterText && transcribedText && !results) handleEvaluation();
+                    }
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        if (isFullScreen) setIsFullScreen(false);
+                        else if (masterText && !results) setShowResetConfirm(true);
+                    }
+                };
+                window.addEventListener('keydown', handleKeyDown);
+                return () => window.removeEventListener('keydown', handleKeyDown);
+            }, [masterText, transcribedText, results, isFullScreen, handleEvaluation]);
+            
+            const handleFileLoad = (text) => {
+                handleReset();
+                setMasterText(text);
+            };
+            
+            const handleStartTyping = () => {
+                if (!timerActive && !results && masterText) {
+                    setTimerActive(true);
+                    setIsPaused(false);
+                    timePausedRef.current = 0;
+                }
+            };
+            
+            const handleReset = () => {
+                setMasterText('');
+                setTranscribedText('');
+                setResults(null);
+                setTimeElapsed(0);
+                setTimerActive(false);
+                setIsPaused(false);
+                setShowResetConfirm(false);
+                setFileInputKey(Date.now());
+            };
+
+            return (
+                <div className={`bg-gray-50 min-h-screen font-sans ${isFullScreen ? 'fullscreen-mode' : ''}`}>
+                    {showResetConfirm && <ConfirmationModal onConfirm={handleReset} onCancel={() => setShowResetConfirm(false)} />}
+                    <style>{`
+                        .mistake-full { background-color: #fee2e2; color: #991b1b; }
+                        .mistake-half { background-color: #fef3c7; color: #92400e; }
+                        .omission { background-color: #e0e7ff; color: #4338ca; text-decoration: line-through; font-style: italic; }
+                        .animate-fade-in { animation: fadeIn 0.5s ease-in-out; } @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+                        .fullscreen-mode .main-content { max-width: 100vw; height: 100vh; padding: 1rem; }
+                        .fullscreen-mode header, .fullscreen-mode .master-passage-container { display: none; }
+                    `}</style>
+                    <div className="container mx-auto p-4 md:p-8 main-content">
+                        <header className="flex justify-between items-center mb-10">
+                            <div className="text-center flex-grow">
+                                <h1 className="text-4xl sm:text-5xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-400 pb-2">
+                                    Steno Buddy
+                                </h1>
+                                <p className="text-base sm:text-lg text-gray-600 mt-1">
+                                    Practice transcription and evaluate accuracy with advanced tools.
+                                </p>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <button onClick={() => setIsFullScreen(!isFullScreen)} title="Toggle Fullscreen" className="p-2 rounded-full hover:bg-gray-200"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isFullScreen ? "M4 14h6m0 0v6m0-6l-7 7m17-11h-6m0 0V4m0 6l7-7" : "M4 8V4m0 0h4M4 4l5 5m11 7v4m0 0h-4m4 0l-5-5"} /></svg></button>
+                            </div>
+                        </header>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            {results ? (
+                                <ResultsDisplay results={results} onShowConfirmation={() => setShowResetConfirm(true)} masterText={masterText} />
+                            ) : (
+                                <div className="bg-white p-6 rounded-xl shadow-lg space-y-6">
+                                    <FileUploader onFileLoad={handleFileLoad} disabled={!!masterText} inputKey={fileInputKey} />
+                                    {masterText && (
+                                        <div className="space-y-4 animate-fade-in">
+                                            <div className="flex justify-around items-center text-center bg-blue-50 p-3 rounded-lg">
+                                                <div aria-live="polite"><p className="text-sm font-medium text-gray-500">Timer</p><p className="text-2xl font-bold text-blue-700">{formatTime(timeElapsed)}</p></div>
+                                                <div aria-live="polite"><p className="text-sm font-medium text-gray-500">WPM</p><p className="text-2xl font-bold text-blue-700">{wpm}</p></div>
+                                                <button onClick={() => setIsPaused(!isPaused)} className="p-2 rounded-full hover:bg-blue-100" title={isPaused ? "Resume" : "Pause"} aria-label={isPaused ? "Resume timer" : "Pause timer"}>
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-700" fill="none" viewBox="0 0 24" stroke="currentColor">{isPaused ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /> : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6" />}</svg>
+                                                </button>
+                                            </div>
+                                            <TranscriptionEditor text={transcribedText} setText={setTranscribedText} onStartTyping={handleStartTyping} disabled={!masterText} />
+                                            <button onClick={handleEvaluation} disabled={isLoading || !transcribedText} className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-transform transform hover:scale-105 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center">
+                                                {isLoading ? 'Evaluating...' : 'Stop Timer & Assess'}
+                                            </button>
+                                             <button onClick={() => setShowResetConfirm(true)} className="w-full text-sm text-gray-600 hover:text-gray-900 font-semibold py-2">Cancel & Start Over</button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            <div className="bg-white p-6 rounded-xl shadow-lg master-passage-container">
+                                <h3 className="text-lg font-semibold text-gray-700 mb-2 border-b pb-2">Master Passage</h3>
+                                <div className="w-full h-[40vh] lg:h-96 overflow-y-auto p-3 border border-gray-200 rounded-lg bg-gray-50 whitespace-pre-wrap leading-relaxed text-gray-800 font-mono">
+                                    {results ? masterText : (
+                                        masterText ? (
+                                            <div className="flex flex-col items-center justify-center h-full text-center font-sans">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-green-500" fill="none" viewBox="0 0 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                <p className="mt-4 text-lg font-semibold text-gray-700">Passage Loaded</p>
+                                                <p className="text-gray-500">The master text is now hidden. Begin typing to start the timer.</p>
+                                            </div>
+                                        ) : (
+                                            <p className="text-gray-500 font-sans">Upload or select a sample passage to view its content here.</p>
+                                        )
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
